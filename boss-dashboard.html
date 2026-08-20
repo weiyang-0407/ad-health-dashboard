@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+  <html lang="zh">
+  <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>广告账号总览</title>
+  <style>
+    :root{
+      --navy:#1e3258; --navy-dark:#152442; --blue:#2f6fed; --green:#1a9c5c;
+    --red:#d64545; --gray-bg:#f4f6fb; --border:#e2e6ee;
+      }
+  *{box-sizing:border-box;}
+  body{
+        margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    background:var(--gray-bg); color:#1a1a1a;
+}
+  header{
+        background:linear-gradient(135deg,var(--navy),var(--navy-dark));
+    color:#fff; padding:28px 32px;
+    }
+  header h1{margin:0 0 6px; font-size:26px; font-weight:700;}
+  header p{margin:0; font-size:14px; opacity:.8;}
+  .wrap{max-width:900px; margin:0 auto; padding:28px 20px 60px;}
+  .toolbar{display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;}
+  .toolbar .status{font-size:13px; color:#666;}
+  .toolbar button{
+        background:var(--blue); color:#fff; border:none; padding:9px 18px;
+            border-radius:8px; font-size:14px; cursor:pointer; font-weight:600;
+  }
+  .toolbar button:hover{background:#2559c4;}
+  .toolbar button:disabled{background:#9db3e0; cursor:default;}
+  .summary-cards{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:22px;}
+  .card{
+        background:#fff; border-radius:12px; padding:18px 20px; border:1px solid var(--border);
+            box-shadow:0 1px 3px rgba(0,0,0,.04);
+  }
+  .card .label{font-size:13px; color:#6b7280; font-weight:600; text-transform:uppercase; letter-spacing:.03em;}
+  .card .value{font-size:32px; font-weight:800; color:var(--navy); margin-top:6px;}
+  table{
+        width:100%; border-collapse:collapse; background:#fff; border-radius:12px;
+      overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.04); border:1px solid var(--border);
+}
+  thead th{
+        background:var(--navy); color:#fff; text-align:left; padding:14px 16px;
+            font-size:13px; text-transform:uppercase; letter-spacing:.03em; font-weight:700;
+    }
+      thead th.num, tbody td.num{text-align:right;}
+  tbody td{padding:14px 16px; border-top:1px solid var(--border); font-size:15px;}
+  tbody tr:nth-child(even){background:#fafbfd;}
+  tbody tr:hover{background:#eef3ff;}
+      tbody td.acct{font-weight:700; color:var(--navy);}
+  tbody td.num{font-variant-numeric:tabular-nums; font-weight:600;}
+  tfoot td{
+    padding:14px 16px; font-weight:800; font-size:15px; border-top:2px solid var(--navy);
+    background:#f0f3fa; color:var(--navy);
+    }
+  tfoot td.num{text-align:right; font-variant-numeric:tabular-nums;}
+  .asof{font-size:12px; color:#9aa2b1; font-weight:400;}
+  .err-banner{
+        background:#fdecea; border:1px solid #f5c2c0; color:#9c2b2b; padding:12px 16px;
+        border-radius:8px; margin-bottom:16px; font-size:14px;
+}
+  .loading{text-align:center; padding:50px; color:#888; font-size:15px;}
+  footer{text-align:center; padding:20px; font-size:12px; color:#9aa2b1;}
+    </style>
+    </head>
+      <body>
+
+      <header>
+        <h1>广告账号总览 — Budget &amp; Leads</h1>
+        <p>所有账号一览，数据每次打开自动读取 Google Sheet 最新内容</p>
+      </header>
+
+<div class="wrap">
+  <div class="toolbar">
+    <div class="status" id="status">加载中…</div>
+    <button id="refreshBtn" onclick="loadData()">刷新数据</button>
+  </div>
+
+        <div id="errBox"></div>
+
+  <div class="summary-cards" id="summaryCards" style="display:none;">
+          <div class="card">
+      <div class="label">全部账号 Total Budget</div>
+      <div class="value" id="totalBudget">–</div>
+    </div>
+          <div class="card">
+      <div class="label">全部账号 7天 Leads</div>
+      <div class="value" id="totalLeads">–</div>
+    </div>
+  </div>
+
+        <div id="tableBox">
+      <div class="loading">正在读取数据…</div>
+  </div>
+
+      <footer>数据来源：Google Sheet（同一份广告监控表）&nbsp;|&nbsp; Budget = 各账号目前所有在投放campaign的预算总额　|　Leads = 最近7天累计</footer>
+</div>
+
+<script>
+      const SHEET_ID = "19UTdyx8sdTJ5h4SXOTxj4UeGmTfhzRSAlPpDxfTiktE";
+
+const CLIENTS = [
+      {name:"ERAT",               tab:"ERAT"},
+{name:"Paramount Property", tab:"Paramount"},
+{name:"Snow Brand",         tab:"Snow Brand"},
+{name:"Ergoworks",          tab:"Ergoworks"},
+{name:"Cendol",             tab:"Cendol"},
+{name:"XXELL.AI",           tab:"XXELL.AI"},
+{name:"iQurious",           tab:"iQurious", strict:true, patterns:["iqurious"]},
+{name:"Blue Abbey",         tab:"Blue Abbey"},
+{name:"Success Resources",  tab:"Success Resources"},
+];
+
+const iDate=0,iPlat=1,iCamp=2,iStatus=3,iSpend=4,iImpr=5,iClicks=6,iCtr=7,
+      iCpm=8,iCpc=9,iRoas=10,iResult=11,iEnd=12,iBudget=13,iBType=14;
+
+let jsonpCounter = 0;
+function loadSheetJSONP(sheetName){
+    return new Promise((resolve, reject) => {
+          const cbName = "__bossCb" + (jsonpCounter++);
+          const script = document.createElement("script");
+    const timeout = setTimeout(() => { cleanup(); reject(new Error(`Timed out loading "${sheetName}"`)); }, 15000);
+    function cleanup(){
+      clearTimeout(timeout);
+      delete window[cbName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+}
+    window[cbName] = function(json){ cleanup(); resolve(json); };
+    script.onerror = function(){ cleanup(); reject(new Error(`Failed to load "${sheetName}"`)); };
+    script.src = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json;responseHandler:${cbName}&sheet=${encodeURIComponent(sheetName)}`;
+    document.head.appendChild(script);
+});
+}
+
+function cellStr(cell){
+  if (!cell || cell.v === null || cell.v === undefined) return "";
+  let v = cell.v;
+  if (typeof v === "string") {
+    const m = v.match(/^Date\((\d+),(\d+),(\d+)\)$/);
+    if (m) {
+      const y = m[1], mo = String(Number(m[2]) + 1).padStart(2, "0"), d = String(m[3]).padStart(2, "0");
+      return `${y}-${mo}-${d}`;
+}
+    return v;
+}
+  return String(v);
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function summarizeClient(json, cfg){
+  const rows = (json.table && json.table.rows) || [];
+  const dataRows = [];
+
+  for (const row of rows) {
+        const c = row.c || [];
+        const date = cellStr(c[iDate]);
+        if (!DATE_RE.test(date)) continue;
+    const campaign = cellStr(c[iCamp]);
+    if (campaign.toUpperCase().includes("TOTAL")) continue;
+
+    if (cfg.strict) {
+      const blob = (campaign + " " + cellStr(c[iPlat])).toLowerCase();
+      if (!cfg.patterns.some(p => blob.includes(p.toLowerCase()))) continue;
+    }
+
+    dataRows.push({
+            date, campaign,
+            spend: parseFloat(cellStr(c[iSpend])) || 0,
+            result: parseFloat(cellStr(c[iResult])) || 0,
+            budget: parseFloat(cellStr(c[iBudget])) || 0,
+      });
+  }
+
+  if (dataRows.length === 0) return { budget: 0, leads: 0, asOf: null, hasData: false };
+
+  const latestDate = dataRows.reduce((a, r) => (r.date > a ? r.date : a), dataRows[0].date);
+
+  const budget = dataRows
+    .filter(r => r.date === latestDate)
+    .reduce((sum, r) => sum + r.budget, 0);
+
+  const cutoff = new Date(latestDate);
+  cutoff.setDate(cutoff.getDate() - 6);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const leads = dataRows
+    .filter(r => r.date >= cutoffStr && r.date <= latestDate)
+    .reduce((sum, r) => sum + r.result, 0);
+
+  return { budget, leads, asOf: latestDate, hasData: true };
+}
+
+function fmtMoney(n){
+  return "RM " + n.toLocaleString("en-MY", {minimumFractionDigits:0, maximumFractionDigits:0});
+}
+
+async function loadData(){
+  const btn = document.getElementById("refreshBtn");
+  const status = document.getElementById("status");
+  const errBox = document.getElementById("errBox");
+  const tableBox = document.getElementById("tableBox");
+  const summaryCards = document.getElementById("summaryCards");
+
+  btn.disabled = true;
+  btn.textContent = "读取中…";
+  status.textContent = "加载中…";
+  errBox.innerHTML = "";
+  tableBox.innerHTML = '<div class="loading">正在读取数据…</div>';
+  summaryCards.style.display = "none";
+
+  const results = [];
+  const errors = [];
+
+  await Promise.all(CLIENTS.map(async cfg => {
+        try {
+          const json = await loadSheetJSONP(cfg.tab);
+          const s = summarizeClient(json, cfg);
+          results.push({ name: cfg.name, ...s });
+    } catch (e) {
+          errors.push(`${cfg.name}: ${e.message}`);
+          results.push({ name: cfg.name, budget: 0, leads: 0, asOf: null, hasData: false, failed: true });
+  }
+}));
+
+  if (errors.length) {
+    errBox.innerHTML = `<div class="err-banner">部分账号读取失败：${errors.join("；")}</div>`;
+}
+
+  results.sort((a, b) => b.budget - a.budget);
+
+  const totalBudget = results.reduce((s, r) => s + r.budget, 0);
+  const totalLeads = results.reduce((s, r) => s + r.leads, 0);
+  document.getElementById("totalBudget").textContent = fmtMoney(totalBudget);
+  document.getElementById("totalLeads").textContent = totalLeads.toLocaleString("en-MY");
+  summaryCards.style.display = "grid";
+
+  let html = `<table><thead><tr>
+      <th>账号</th><th class="num">Budget</th><th class="num">Leads（7天）</th>
+    </tr></thead><tbody>`;
+  for (const r of results) {
+    const asOfTag = r.asOf ? `<span class="asof"> as of ${r.asOf}</span>` : (r.failed ? `<span class="asof"> 读取失败</span>` : `<span class="asof"> 暂无数据</span>`);
+    html += `<tr>
+        <td class="acct">${r.name}${asOfTag}</td>
+        <td class="num">${r.hasData ? fmtMoney(r.budget) : "–"}</td>
+        <td class="num">${r.hasData ? r.leads.toLocaleString("en-MY") : "–"}</td>
+      </tr>`;
+}
+  html += `</tbody><tfoot><tr>
+      <td>合计</td>
+      <td class="num">${fmtMoney(totalBudget)}</td>
+      <td class="num">${totalLeads.toLocaleString("en-MY")}</td>
+    </tr></tfoot></table>`;
+  tableBox.innerHTML = html;
+
+  const now = new Date();
+  status.textContent = "最后更新：" + now.toLocaleString("zh-CN", { hour12:false });
+  btn.disabled = false;
+  btn.textContent = "刷新数据";
+}
+
+loadData();
+</script>
+
+</body>
+</html>
