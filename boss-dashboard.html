@@ -20,7 +20,7 @@
   }
   header h1{margin:0 0 6px; font-size:26px; font-weight:700;}
   header p{margin:0; font-size:14px; opacity:.8;}
-  .wrap{max-width:1080px; margin:0 auto; padding:28px 20px 60px;}
+  .wrap{max-width:1120px; margin:0 auto; padding:28px 20px 60px;}
   .toolbar{display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;}
   .toolbar .status{font-size:13px; color:#666;}
   .toolbar button{
@@ -38,20 +38,24 @@
   .card .value{font-size:32px; font-weight:800; color:var(--navy); margin-top:6px;}
   .table-scroll{overflow-x:auto; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.04); border:1px solid var(--border);}
   table{
-    width:100%; border-collapse:collapse; background:#fff; min-width:760px;
+    width:100%; border-collapse:collapse; background:#fff; min-width:900px;
   }
   thead th{
     background:var(--navy); color:#fff; text-align:left; padding:14px 16px;
     font-size:12px; text-transform:uppercase; letter-spacing:.03em; font-weight:700; white-space:nowrap;
   }
   thead th.num, tbody td.num{text-align:right;}
-  tbody td{padding:14px 16px; border-top:1px solid var(--border); font-size:15px; white-space:nowrap;}
+  tbody td{padding:14px 16px; border-top:1px solid var(--border); font-size:15px; vertical-align:top;}
   tbody tr:nth-child(even){background:#fafbfd;}
   tbody tr:hover{background:#eef3ff;}
   tbody td.acct{font-weight:700; color:var(--navy); white-space:normal;}
-  tbody td.num{font-variant-numeric:tabular-nums; font-weight:600;}
+  tbody td.num{font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap;}
   tbody td.total{font-weight:800; color:var(--navy); background:#f0f3fa;}
   tbody td.muted{color:#b7bec9;}
+  tbody td.results{white-space:normal; min-width:220px;}
+  .result-line{display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:1px 0;}
+  .result-line .rtype{color:#6b7280;}
+  .result-line .rnum{font-variant-numeric:tabular-nums; font-weight:600; color:#1a1a1a;}
   tfoot td{
     padding:14px 16px; font-weight:800; font-size:15px; border-top:2px solid var(--navy);
     background:#f0f3fa; color:var(--navy);
@@ -96,7 +100,7 @@
     <div class="loading">Loading data...</div>
   </div>
 
-  <footer>Data source: Google Sheet (same ad monitoring sheet) | Budget = current budget of all live campaigns, broken down by platform (latest snapshot) | Results = all-time cumulative total of each campaign's own configured result metric (leads, messages, engagement, conversions, etc. - whatever that campaign is set up to optimize for)</footer>
+  <footer>Data source: Google Sheet (same ad monitoring sheet) | Budget = current budget of all live campaigns, broken down by platform (latest snapshot) | Results = all-time cumulative total of each campaign's own configured result metric, broken down by type (Leads, Engagement, Messages, Purchases, Conversions, etc.) so you can see what each number actually represents</footer>
 </div>
 
 <script>
@@ -159,6 +163,19 @@ function normPlatform(p){
   return p || "";
 }
 
+function resultTypeOf(platform, campaignName){
+  if (platform !== "Meta") return "Conversions";
+  const n = campaignName.toLowerCase();
+  if (n.includes("lead form") || n.includes("lead")) return "Leads";
+  if (n.includes("add to cart") || n.includes("cart")) return "Add to Cart";
+  if (n.includes("purchase")) return "Purchases";
+  if (n.includes("whatsapp") || n.includes("message")) return "Messages";
+  if (n.includes("engagement") || n.includes("boosting") || n.includes("instagram post")) return "Engagement";
+  if (n.includes("traffic")) return "Traffic";
+  if (n.includes("bbb")) return "Registrations";
+  return "Leads";
+}
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function summarizeClient(json, cfg){
@@ -180,13 +197,14 @@ function summarizeClient(json, cfg){
     dataRows.push({
       date,
       platform: normPlatform(cellStr(c[iPlat])),
+      campaign,
       result: parseFloat(cellStr(c[iResult])) || 0,
       budget: parseFloat(cellStr(c[iBudget])) || 0,
     });
   }
 
   if (dataRows.length === 0) {
-    return { platformBudget: {}, totalBudget: 0, results: 0, asOf: null, hasData: false };
+    return { platformBudget: {}, totalBudget: 0, results: 0, byType: {}, asOf: null, hasData: false };
   }
 
   const latestDate = dataRows.reduce((a, r) => (r.date > a ? r.date : a), dataRows[0].date);
@@ -198,13 +216,22 @@ function summarizeClient(json, cfg){
   }
   const totalBudget = Object.values(platformBudget).reduce((a, b) => a + b, 0);
 
-  const results = dataRows.reduce((sum, r) => sum + r.result, 0);
+  const byType = {};
+  let results = 0;
+  for (const r of dataRows) {
+    const t = resultTypeOf(r.platform, r.campaign);
+    byType[t] = (byType[t] || 0) + r.result;
+    results += r.result;
+  }
 
-  return { platformBudget, totalBudget, results, asOf: latestDate, hasData: true };
+  return { platformBudget, totalBudget, results, byType, asOf: latestDate, hasData: true };
 }
 
 function fmtMoney(n){
   return "RM " + n.toLocaleString("en-MY", {minimumFractionDigits:0, maximumFractionDigits:0});
+}
+function fmtNum(n){
+  return n.toLocaleString("en-MY");
 }
 
 async function loadData(){
@@ -231,7 +258,7 @@ async function loadData(){
       results.push({ name: cfg.name, ...s });
     } catch (e) {
       errors.push(cfg.name + ": " + e.message);
-      results.push({ name: cfg.name, platformBudget: {}, totalBudget: 0, results: 0, asOf: null, hasData: false, failed: true });
+      results.push({ name: cfg.name, platformBudget: {}, totalBudget: 0, results: 0, byType: {}, asOf: null, hasData: false, failed: true });
     }
   }));
 
@@ -244,12 +271,12 @@ async function loadData(){
   const totalBudget = results.reduce((s, r) => s + r.totalBudget, 0);
   const totalResults = results.reduce((s, r) => s + r.results, 0);
   document.getElementById("totalBudget").textContent = fmtMoney(totalBudget);
-  document.getElementById("totalResults").textContent = totalResults.toLocaleString("en-MY");
+  document.getElementById("totalResults").textContent = fmtNum(totalResults);
   summaryCards.style.display = "grid";
 
   let html = '<div class="table-scroll"><table><thead><tr><th>Account</th>' +
     PLATFORMS.map(p => '<th class="num">' + p + ' Budget</th>').join("") +
-    '<th class="num">Total Budget</th><th class="num">Results</th></tr></thead><tbody>';
+    '<th class="num">Total Budget</th><th>Results (by type)</th></tr></thead><tbody>';
   for (const r of results) {
     const asOfTag = r.asOf ? '<span class="asof">as of ' + r.asOf + '</span>' : (r.failed ? '<span class="asof">failed to load</span>' : '<span class="asof">no data</span>');
     html += '<tr><td class="acct">' + r.name + asOfTag + '</td>';
@@ -258,7 +285,14 @@ async function loadData(){
       html += '<td class="num' + (v ? "" : " muted") + '">' + (v ? fmtMoney(v) : "-") + '</td>';
     }
     html += '<td class="num total">' + (r.hasData ? fmtMoney(r.totalBudget) : "-") + '</td>';
-    html += '<td class="num">' + (r.hasData ? r.results.toLocaleString("en-MY") : "-") + '</td>';
+    if (r.hasData && r.byType && Object.keys(r.byType).length) {
+      const entries = Object.entries(r.byType).sort((a, b) => b[1] - a[1]);
+      html += '<td class="results">' + entries.map(function(e){
+        return '<div class="result-line"><span class="rtype">' + e[0] + '</span><span class="rnum">' + fmtNum(e[1]) + '</span></div>';
+      }).join("") + '</td>';
+    } else {
+      html += '<td class="results muted">-</td>';
+    }
     html += '</tr>';
   }
   html += '</tbody><tfoot><tr><td>Total</td>';
@@ -266,7 +300,7 @@ async function loadData(){
     const sum = results.reduce((s, r) => s + ((r.platformBudget && r.platformBudget[p]) || 0), 0);
     html += '<td class="num">' + fmtMoney(sum) + '</td>';
   }
-  html += '<td class="num">' + fmtMoney(totalBudget) + '</td><td class="num">' + totalResults.toLocaleString("en-MY") + '</td></tr></tfoot></table></div>';
+  html += '<td class="num">' + fmtMoney(totalBudget) + '</td><td class="num">' + fmtNum(totalResults) + '</td></tr></tfoot></table></div>';
   tableBox.innerHTML = html;
 
   const now = new Date();
